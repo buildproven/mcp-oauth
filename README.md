@@ -10,8 +10,10 @@ bearer-token check for the MCP route (`authorizeMcpRequest`, from `jobrecon/mcp/
 
 ## Use
 
-Products depend on a git tag, not npm: `"@buildproven/mcp-oauth": "github:buildproven/mcp-oauth#v0.1.0"`. Installing
-runs `prepare`, which builds `dist/`.
+Products install the release tarball of a version tag, not npm and not the git tag itself:
+`"@buildproven/mcp-oauth": "https://github.com/buildproven/mcp-oauth/releases/download/v0.1.0/buildproven-mcp-oauth-0.1.0.tgz"`.
+The tarball already holds `dist/`, so no install script runs (pnpm 11 refuses a git dependency's `prepare`). Pushing a
+`v*` tag that matches `package.json` publishes it (`.github/workflows/release.yml`); a published tarball never changes.
 
 ```ts
 import { createOAuthServer } from '@buildproven/mcp-oauth'
