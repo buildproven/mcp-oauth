@@ -1,0 +1,18 @@
+{
+  "checks": {
+    "actionlint": "actionlint -shellcheck= -pyflakes=",
+    "lint": "npm run lint",
+    "format": "npm run format:check",
+    "typecheck": "npm run type-check",
+    "build": "npm run build",
+    "test": "npm test"
+  },
+  "testCommand": "npm test",
+  "testFilesCommand": "npx vitest run {files}",
+  "linearProject": "mcp-oauth",
+  "install": "npm ci",
+  "review": true,
+  "acceptance": {
+    "audit": "npm audit --omit=dev --audit-level=high"
+  }
+}

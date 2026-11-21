@@ -1,0 +1,51 @@
+name: Quality Checks
+
+# Every job takes its runner from vars.CI_RUNS_ON (machine-setup scripts/ci-runners.mjs local), as in
+# buildproven/jobrecon. A fork PR falls back to GitHub-hosted runners. `summary` is the required check.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run type-check
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+
+  summary:
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    needs: [checks]
+    if: always()
+    steps:
+      - name: Fail when a required job did not succeed
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: |
+          failed=0
+          for pair in "checks=$CHECKS_RESULT"; do
+            if [ "${pair#*=}" != "success" ]; then
+              echo "::error::${pair%%=*} finished with ${pair#*=}"
+              failed=1
+            fi
+          done
+          exit "$failed"
