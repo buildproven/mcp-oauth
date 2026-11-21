@@ -4,8 +4,9 @@ Owner-only OAuth 2.1 authorization server and token checks for a hosted MCP endp
 agent-first products (machine-setup `docs/AGENT-FIRST.md`, rule 3). Claude signs the owner in through GitHub; only the
 configured GitHub login gets a token.
 
-The authorization server (`createOAuthServer`) is here, moved from `jobrecon/mcp/oauth-server.ts`. The bearer-token
-check for the MCP route and the move of `retire-runway` follow (see `docs/DESIGN.md`).
+The authorization server (`createOAuthServer`) is here, moved from `jobrecon/mcp/oauth-server.ts`, and so is the
+bearer-token check for the MCP route (`authorizeMcpRequest`, from `jobrecon/mcp/http-auth.ts`). The move of
+`retire-runway` follows (see `docs/DESIGN.md`).
 
 ## Use
 
@@ -30,6 +31,25 @@ variable, never its value.
 `grantStore` records spent codes and refresh tokens (`claim(id, expiresAt)` is true on the first claim only). Use
 `createMemoryGrantStore()` for tests; a hosted product supplies a shared store and rejects with `GrantStoreError` when it
 cannot read or write.
+
+## Protect the MCP route
+
+```ts
+import { authorizeMcpRequest, resourceUrls } from '@buildproven/mcp-oauth'
+
+const auth = await authorizeMcpRequest(request, { prefix: 'WANDERPAGE' })
+if (!auth.ok) return auth.response
+// auth.value is the AuthInfo the MCP SDK expects (token, clientId, scopes, expiresAt, resource, extra.subject)
+```
+
+The check reads `WANDERPAGE_OAUTH_ISSUER`, `WANDERPAGE_OAUTH_JWKS_URL` and `WANDERPAGE_OWNER_SUBJECT` on each request.
+It answers `401` with `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource"` for no
+token or an invalid one (wrong signature, issuer, audience or algorithm, or expired), `403` for another subject, `502`
+when the issuer's keys cannot be loaded, and `503` naming each missing or non-https setting (never its value). Serve
+`/.well-known/oauth-protected-resource` with `resource: resourceUrls(request).mcpUrl`; `resourceUrls` takes the host from
+`request.url`, never from a `Host` or `X-Forwarded-*` header.
+
+`@modelcontextprotocol/server` (for the `AuthInfo` type) is a peer dependency: the product already installs it.
 
 ## Develop
 

@@ -29,8 +29,15 @@ need the same server. One package keeps one tested copy.
   take). Any other error from a store is a bug and is not caught.
 - `src/ssrf-protection.ts` guards client ID metadata document URLs: https on port 443, a host that resolves only to
   public unicast addresses, and a fetch pinned to the checked address with no redirect and a size limit.
-- Next: `authorizeMcpRequest(request, config)` and `resourceUrls(request)` check a bearer token for the MCP route and
-  build the `401` `WWW-Authenticate: Bearer resource_metadata=…` answer (a later card).
+- `authorizeMcpRequest(request, { prefix, env?, keys? })` checks the bearer token for the MCP route (`src/http-auth.ts`,
+  moved from jobrecon `mcp/http-auth.ts`). It reads `<PREFIX>_OAUTH_ISSUER`, `<PREFIX>_OAUTH_JWKS_URL` and
+  `<PREFIX>_OWNER_SUBJECT` on each request and accepts only an asymmetric JWT with that `iss`, `aud` = the MCP URL,
+  `sub` and `exp`. Answers: `503` naming each missing or non-https setting (before the token is read), `401` with
+  `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource"` for no or an invalid
+  token, `403` for another subject, `502` when the keys cannot be loaded; else `AuthInfo` for the MCP SDK.
+  `resourceUrls(request)` builds the MCP and metadata URLs from the origin of `request.url`, never from `Host` or
+  `X-Forwarded-*`. `@modelcontextprotocol/server` is a peer and dev dependency (the `AuthInfo` type only). Unlike
+  jobrecon's copy it does not check `DATABASE_URL`: the product checks its own store settings.
 - Stateless otherwise: client IDs (DCR), sign-in state, codes and refresh tokens are JWTs signed with the ES256 key,
   each with its own `typ` and `aud`.
 
