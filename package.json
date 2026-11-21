@@ -39,5 +39,8 @@
     "dist",
     "src",
     "!src/**/*.test.ts"
-  ]
+  ],
+  "dependencies": {
+    "jose": "^6.2.18"
+  }
 }
