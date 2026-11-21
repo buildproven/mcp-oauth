@@ -1,0 +1,87 @@
+name: Release
+
+# REQ-OAUTH-RELEASE: each v* tag publishes the built package (npm pack, dist/ included) as a release asset.
+# Products install that tarball URL, so no install script runs (pnpm 11 refuses a git dependency's `prepare`).
+# workflow_dispatch publishes a tag pushed before this workflow existed.
+# The write token never meets dependency code: `pack` installs, tests and packs with a read-only token and no saved
+# credentials; `publish` runs only scripts/release.ts (Node built-ins) to attach the tarball.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (for example v0.1.0)'
+        required: true
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 15
+    steps:
+      # The release script comes from this workflow's commit; the package from the tag (an older tag may predate the
+      # script).
+      - uses: actions/checkout@v7
+        with:
+          path: tool
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          path: package
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package/.nvmrc
+      - run: npm ci
+        working-directory: package
+      - run: npm test
+        working-directory: package
+      - name: Pack the tag
+        working-directory: package
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: node ../tool/scripts/release.ts pack "$TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: package/*.tgz
+          if-no-files-found: error
+
+  publish:
+    needs: [pack]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: tool
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: tool/.nvmrc
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarball
+          path: dist-tarball
+      - name: Attach the tarball to the release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          files=(dist-tarball/*.tgz)
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "::error::expected one tarball, found ${#files[@]}"
+            exit 1
+          fi
+          node tool/scripts/release.ts publish "$TAG" "${files[0]}"

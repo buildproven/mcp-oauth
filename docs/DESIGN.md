@@ -42,3 +42,12 @@ need the same server. One package keeps one tested copy.
   each with its own `typ` and `aud`.
 
 Redirects: `https://claude.ai/api/mcp/auth_callback` and a loopback redirect on any port for Claude Code.
+
+## Release
+
+- REQ-OAUTH-RELEASE: When a `v*` tag is pushed (or `release.yml` is run by hand for a tag), the workflow shall run the
+  tests, refuse a tag that is not `v` + the `package.json` version, `npm pack` the package, refuse a tarball without
+  `dist/index.js` and `dist/index.d.ts`, and attach it to that tag's GitHub release as
+  `buildproven-mcp-oauth-<version>.tgz`. It shall refuse to replace an asset that is already published.
+- Why: installing the git tag runs `prepare` to build `dist/`, and pnpm 11 refuses a git dependency's install scripts
+  (wander-page BUI-2099 blocked, 2026-11-21). A tarball needs no build on install.
