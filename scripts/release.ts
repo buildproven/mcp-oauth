@@ -1,6 +1,7 @@
 // REQ-OAUTH-RELEASE: each version tag publishes the built package as a GitHub release asset, so products install a
 // tarball that already holds dist/ and run no install script (pnpm 11 refuses a git dependency's `prepare`).
-// Run by .github/workflows/release.yml: `node scripts/release.ts <tag>` with GITHUB_TOKEN and GITHUB_REPOSITORY set.
+// Run by .github/workflows/release.yml: `pack <tag>` in a read-only job, then `publish <tag> <file>` in a job that
+// has write access and runs no dependency code (GITHUB_TOKEN and GITHUB_REPOSITORY set).
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { basename } from 'node:path'
@@ -45,17 +46,27 @@ async function github(url: string, token: string, init: RequestInit = {}): Promi
   })
 }
 
-async function main(tag: string): Promise<void> {
-  const token = process.env.GITHUB_TOKEN
-  const repository = process.env.GITHUB_REPOSITORY
-  if (!token || !repository) throw new Error('GITHUB_TOKEN and GITHUB_REPOSITORY must be set')
+/** Pack the checked-out tag (run in the package folder, read-only job): returns the checked tarball path. */
+function pack(tag: string): string {
   const { version } = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string }
   checkTag(tag, version)
-
   const file =
     execFileSync('npm', ['pack', '--silent'], { encoding: 'utf8' }).trim().split('\n').at(-1) ?? ''
   if (basename(file) !== assetName(version))
     throw new Error(`npm pack wrote ${file}, expected ${assetName(version)}`)
+  checkPacked(execFileSync('tar', ['tzf', file], { encoding: 'utf8' }).trim().split('\n'))
+  return file
+}
+
+/** Attach a packed tarball to the tag's release (write job: runs no dependency code). */
+async function publish(tag: string, file: string): Promise<void> {
+  const token = process.env.GITHUB_TOKEN
+  const repository = process.env.GITHUB_REPOSITORY
+  if (!token || !repository) throw new Error('GITHUB_TOKEN and GITHUB_REPOSITORY must be set')
+  const version = tag.replace(/^v/, '')
+  checkTag(tag, version)
+  if (basename(file) !== assetName(version))
+    throw new Error(`${file} is not ${assetName(version)} for tag ${tag}`)
   checkPacked(execFileSync('tar', ['tzf', file], { encoding: 'utf8' }).trim().split('\n'))
 
   const api = `https://api.github.com/repos/${repository}`
@@ -85,7 +96,8 @@ async function main(tag: string): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  const tag = process.argv[2]
-  if (!tag) throw new Error('usage: node scripts/release.ts <tag>')
-  await main(tag)
+  const [mode, tag, file] = process.argv.slice(2)
+  if (mode === 'pack' && tag) console.log(pack(tag))
+  else if (mode === 'publish' && tag && file) await publish(tag, file)
+  else throw new Error('usage: node scripts/release.ts pack <tag> | publish <tag> <file>')
 }
