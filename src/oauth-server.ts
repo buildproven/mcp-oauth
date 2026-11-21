@@ -60,7 +60,7 @@ const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
 const GITHUB_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 const GITHUB_USER_URL = 'https://api.github.com/user'
 
-const PREFIX_PATTERN = /^[A-Z][A-Z0-9_]*$/
+export const PREFIX_PATTERN = /^[A-Z][A-Z0-9_]*$/
 
 // One kind of signed value per `typ` and `aud` (RFC 8725 explicit typing).
 type Kind = 'client' | 'state' | 'code' | 'refresh'

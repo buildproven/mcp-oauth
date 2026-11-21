@@ -15,3 +15,5 @@ export {
 export type { FetchFn, OAuthServer, OAuthServerOptions } from './oauth-server.js'
 export { GrantStoreError, createMemoryGrantStore } from './grant-store.js'
 export type { GrantStore } from './grant-store.js'
+export { RESOURCE_METADATA_PATH, authorizeMcpRequest, resourceUrls } from './http-auth.js'
+export type { AuthResult, AuthorizeConfig } from './http-auth.js'
