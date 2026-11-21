@@ -21,7 +21,7 @@
     "prettier": "^3.10.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.72.2",
-    "vitest": "^4.1.12"
+    "vitest": "^5.1.1"
   },
   "description": "Owner-only OAuth 2.1 authorization server and token checks for hosted MCP endpoints",
   "license": "MIT",
