@@ -25,6 +25,7 @@ import { GrantStoreError, type GrantStore } from './grant-store.js'
 import {
   fetchPinned,
   pinOf,
+  parseDomainList,
   validateUrl,
   type DnsResolver,
   type PinnedAddress,
@@ -346,14 +347,19 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
       'createOAuthServer: prefix must be upper-case letters, digits and underscores, starting with a letter',
     )
   }
-  if (!isRecord(grantStore) || typeof grantStore.claim !== 'function') {
-    throw new Error('createOAuthServer: grantStore is required')
+  if (
+    !isRecord(grantStore) ||
+    typeof grantStore.claim !== 'function' ||
+    typeof grantStore.has !== 'function'
+  ) {
+    throw new Error('createOAuthServer: grantStore with claim and has is required')
   }
   const slug = prefix.toLowerCase()
   const issuerEnv = `${prefix}_OAUTH_ISSUER`
   const signingKeyEnv = `${prefix}_OAUTH_SIGNING_KEY`
   const githubClientIdEnv = `${prefix}_GITHUB_OAUTH_CLIENT_ID`
   const githubClientSecretEnv = `${prefix}_GITHUB_OAUTH_CLIENT_SECRET`
+  const blockedDomainsEnv = `${prefix}_SSRF_BLOCKED_DOMAINS`
   const nonceCookieName = `${slug}_oauth_nonce`
   const userAgent = `${slug}-oauth`
   const kinds: Record<Kind, { readonly typ: string; readonly aud: string }> = {
@@ -522,7 +528,12 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     try {
       // The host must resolve, and only to public addresses.
       const signal = AbortSignal.timeout(OUTBOUND_TIMEOUT_MS)
-      const safe = await validateUrl(clientId, signal, resolver)
+      const safe = await validateUrl(
+        clientId,
+        signal,
+        resolver,
+        parseDomainList(env()[blockedDomainsEnv]),
+      )
       if (!safe.allowed || safe.ip === undefined) {
         return bad(`the client_id URL is refused: ${safe.error}`)
       }

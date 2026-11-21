@@ -253,18 +253,17 @@ const DOMAIN_BLOCKLIST: readonly string[] = [
   'broadcasthost',
 ]
 
-/** The built-in blocklist plus the deployment's `SSRF_BLOCKED_DOMAINS`. */
-function blockedDomains(): string[] {
-  const extra = (process.env.SSRF_BLOCKED_DOMAINS ?? '')
+/** Splits a comma-separated domain list, dropping blanks. */
+export function parseDomainList(value: string | undefined): string[] {
+  return (value ?? '')
     .split(',')
     .map(domain => domain.trim())
     .filter(domain => domain !== '')
-  return [...DOMAIN_BLOCKLIST, ...extra]
 }
 
-function isDomainBlocked(hostname: string): boolean {
+function isDomainBlocked(hostname: string, extra: readonly string[]): boolean {
   const host = hostname.toLowerCase()
-  return blockedDomains().some(blocked => {
+  return [...DOMAIN_BLOCKLIST, ...extra].some(blocked => {
     const entry = blocked.toLowerCase()
     return host === entry || host.endsWith(`.${entry}`)
   })
@@ -272,12 +271,15 @@ function isDomainBlocked(hostname: string): boolean {
 
 /**
  * Checks that `url` is an http(s) URL on port 80 or 443 whose host resolves
- * only to public unicast addresses. Rejects when `signal` aborts.
+ * only to public unicast addresses. `extraBlocked` adds domains to the built-in
+ * blocklist; a caller that owns its settings passes them, and a direct call
+ * defaults to `SSRF_BLOCKED_DOMAINS`. Rejects when `signal` aborts.
  */
 export async function validateUrl(
   url: string,
   signal?: AbortSignal,
   resolver?: DnsResolver,
+  extraBlocked: readonly string[] = parseDomainList(process.env.SSRF_BLOCKED_DOMAINS),
 ): Promise<SSRFValidationResult> {
   try {
     const parsedUrl = new URL(url)
@@ -288,7 +290,7 @@ export async function validateUrl(
 
     const hostname = parsedUrl.hostname.toLowerCase()
 
-    if (isDomainBlocked(hostname)) {
+    if (isDomainBlocked(hostname, extraBlocked)) {
       return { allowed: false, error: 'Domain is blocked' }
     }
 

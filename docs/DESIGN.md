@@ -13,9 +13,9 @@ need the same server. One package keeps one tested copy.
   `/oauth/authorize`, `/oauth/token`, `/oauth/register`, `/oauth/jwks`, `/oauth/github/callback`, and the
   `/.well-known/oauth-authorization-server` metadata (`metadata`, `jwks`, `register`, `authorize`, `githubCallback`,
   `token`, `preflight`). The route paths are exported as constants. `prefix` is upper case (`WANDERPAGE`); the server
-  throws at creation for another form, and for a missing `grantStore`.
+  throws at creation for another form, and for a `grantStore` without `claim` and `has`.
 - Env names derive from `prefix`: `<PREFIX>_OAUTH_ISSUER`, `<PREFIX>_OAUTH_SIGNING_KEY`,
-  `<PREFIX>_GITHUB_OAUTH_CLIENT_ID`, `<PREFIX>_GITHUB_OAUTH_CLIENT_SECRET`. The owner login is `OWNER_GITHUB_LOGIN`.
+  `<PREFIX>_GITHUB_OAUTH_CLIENT_ID`, `<PREFIX>_GITHUB_OAUTH_CLIENT_SECRET`. Optional: `<PREFIX>_SSRF_BLOCKED_DOMAINS`, a comma-separated list added to the SSRF blocklist (from the injected `env`, not `process.env`). The owner login is `OWNER_GITHUB_LOGIN`.
   Settings are read on each request. A missing or unusable setting answers `500` with `error_description` and
   `missing` / `invalid` naming the variable; the value is never printed. No other prefix is read.
 - The `typ` and `aud` of each signed value, the sign-in nonce cookie and the GitHub `user-agent` carry the lower-case
