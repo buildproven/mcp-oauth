@@ -11,8 +11,9 @@ export {
   TOKEN_PATH,
   createOAuthServer,
   redirectMatches,
+  signupMode,
 } from './oauth-server.js'
-export type { FetchFn, OAuthServer, OAuthServerOptions } from './oauth-server.js'
+export type { FetchFn, OAuthServer, OAuthServerOptions, SignupMode } from './oauth-server.js'
 export { GrantStoreError, createMemoryGrantStore } from './grant-store.js'
 export type { GrantStore } from './grant-store.js'
 export { RESOURCE_METADATA_PATH, authorizeMcpRequest, resourceUrls } from './http-auth.js'

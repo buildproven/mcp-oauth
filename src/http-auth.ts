@@ -1,12 +1,14 @@
 // Resource-server checks for the hosted MCP route (BUI-2098). The route is an
 // OAuth 2.0 resource server: it accepts only a JWT access token that the
 // configured issuer signed (keys from its JWKS URL), issued for this server's
-// MCP URL (`aud`, RFC 8707), unexpired, and whose subject is the owner. It
+// MCP URL (`aud`, RFC 8707), unexpired, and whose subject is the owner (any
+// subject when `<PREFIX>_SIGNUP=open`). It
 // never issues tokens; sign-in belongs to the authorization server.
 import type { AuthInfo } from '@modelcontextprotocol/server'
 import { createRemoteJWKSet, errors, jwtVerify } from 'jose'
 import type { JWTPayload, JWTVerifyGetKey } from 'jose'
-import { MCP_PATH, PREFIX_PATTERN } from './oauth-server.js'
+import { MCP_PATH, PREFIX_PATTERN, parseSignup } from './oauth-server.js'
+import type { SignupMode } from './oauth-server.js'
 
 /** Path of the RFC 9728 protected resource metadata document. */
 export const RESOURCE_METADATA_PATH = '/.well-known/oauth-protected-resource'
@@ -61,10 +63,15 @@ function isSecureUrl(value: string): boolean {
 }
 
 /** A 503 that names the settings at fault and never their values. */
-function configProblem(missing: readonly string[], invalid: readonly string[]): Response {
+function configProblem(
+  missing: readonly string[],
+  invalid: readonly string[],
+  detail = '',
+): Response {
   const parts = [
     missing.length > 0 ? `missing ${missing.join(', ')}` : '',
     invalid.length > 0 ? `not an https URL: ${invalid.join(', ')}` : '',
+    detail,
   ].filter(part => part !== '')
   return Response.json(
     {
@@ -81,8 +88,9 @@ interface Settings {
   /** The issuer without trailing slashes, the form the server signs as `iss`. */
   readonly issuer: string
   readonly jwksUrl: URL
-  /** The one token subject (`sub`) the route serves. */
-  readonly ownerSubject: string
+  readonly mode: SignupMode
+  /** The one token subject (`sub`) the route serves; `undefined` in open mode. */
+  readonly ownerSubject: string | undefined
 }
 
 function readSettings(
@@ -92,6 +100,14 @@ function readSettings(
   const issuerEnv = `${prefix}_OAUTH_ISSUER`
   const jwksEnv = `${prefix}_OAUTH_JWKS_URL`
   const ownerEnv = `${prefix}_OWNER_SUBJECT`
+  const signupEnv = `${prefix}_SIGNUP`
+  const mode = parseSignup(env[signupEnv])
+  if (mode === undefined) {
+    return {
+      ok: false,
+      response: configProblem([], [], `${signupEnv} must be unset, owner or open`),
+    }
+  }
   const missing: string[] = []
   const invalid: string[] = []
   const read = (name: string): string => {
@@ -101,7 +117,7 @@ function readSettings(
   }
   const issuer = read(issuerEnv)
   const jwks = read(jwksEnv)
-  const owner = read(ownerEnv)
+  const owner = mode === 'owner' ? read(ownerEnv) : undefined
   if (issuer !== '' && !isSecureUrl(issuer)) invalid.push(issuerEnv)
   if (jwks !== '' && !isSecureUrl(jwks)) invalid.push(jwksEnv)
   if (missing.length > 0 || invalid.length > 0) {
@@ -112,6 +128,7 @@ function readSettings(
     value: {
       issuer: issuer.replace(/\/+$/, ''),
       jwksUrl: new URL(jwks),
+      mode,
       ownerSubject: owner,
     },
   }
@@ -190,7 +207,7 @@ function authInfo(token: string, payload: JWTPayload, mcpUrl: string): AuthInfo 
 
 /**
  * Checks the request's bearer token. Resolves to the token's AuthInfo for the
- * owner, else to the response to send: 503 (a setting is missing or unusable,
+ * owner (any subject when `<PREFIX>_SIGNUP=open`; it is `extra.subject`), else to the response to send: 503 (a setting is missing or unusable,
  * named), 401 (no valid token, with the metadata challenge), 403 (another
  * subject) or 502 (the issuer's keys could not be loaded). Throws for a
  * `prefix` that is not upper case.
@@ -206,7 +223,7 @@ export async function authorizeMcpRequest(
   }
   const settings = readSettings(config.prefix, config.env ?? process.env)
   if (!settings.ok) return settings
-  const { issuer, jwksUrl, ownerSubject } = settings.value
+  const { issuer, jwksUrl, mode, ownerSubject } = settings.value
   const { mcpUrl, metadataUrl } = resourceUrls(request)
 
   const token = bearerToken(request)
@@ -241,7 +258,11 @@ export async function authorizeMcpRequest(
     }
   }
 
-  if (payload.sub !== ownerSubject) {
+  // Open mode serves every subject, so the token must carry a real one.
+  if (mode === 'open' && (typeof payload.sub !== 'string' || payload.sub === '')) {
+    return { ok: false, response: challenge(metadataUrl) }
+  }
+  if (mode === 'owner' && payload.sub !== ownerSubject) {
     return {
       ok: false,
       response: Response.json(
