@@ -33,6 +33,30 @@ import {
 
 const OWNER_LOGIN_ENV = 'OWNER_GITHUB_LOGIN'
 
+/** Who may sign in: only `OWNER_GITHUB_LOGIN`, or any GitHub login. */
+export type SignupMode = 'owner' | 'open'
+
+/**
+ * The signup mode set in `<prefix>_SIGNUP`: `open` lets any GitHub login sign
+ * in, with that login (lower case) as the token subject. Unset, blank or
+ * `owner` keeps the owner-only rule. Any other value also answers `owner`
+ * (closed is the safe side); the servers refuse to run with such a value and
+ * name the setting.
+ */
+export function signupMode(
+  prefix: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): SignupMode {
+  return parseSignup(env[`${prefix}_SIGNUP`]) ?? 'owner'
+}
+
+/** The mode a setting value names; `undefined` for a value that names none. */
+export function parseSignup(value: string | undefined): SignupMode | undefined {
+  const text = (value ?? '').trim().toLowerCase()
+  if (text === '' || text === 'owner') return 'owner'
+  return text === 'open' ? 'open' : undefined
+}
+
 export const AUTHORIZE_PATH = '/oauth/authorize'
 export const TOKEN_PATH = '/oauth/token'
 export const REGISTER_PATH = '/oauth/register'
@@ -360,6 +384,7 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   const githubClientIdEnv = `${prefix}_GITHUB_OAUTH_CLIENT_ID`
   const githubClientSecretEnv = `${prefix}_GITHUB_OAUTH_CLIENT_SECRET`
   const blockedDomainsEnv = `${prefix}_SSRF_BLOCKED_DOMAINS`
+  const signupEnv = `${prefix}_SIGNUP`
   const nonceCookieName = `${slug}_oauth_nonce`
   const userAgent = `${slug}-oauth`
   const kinds: Record<Kind, { readonly typ: string; readonly aud: string }> = {
@@ -399,6 +424,43 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     }
     if (missing.length > 0) return { ok: false, response: configProblem(missing) }
     return { ok: true, value: values }
+  }
+
+  /** The signup mode, or the 500 that names a `<prefix>_SIGNUP` value that names none. */
+  function readSignup(): Checked<SignupMode> {
+    const mode = parseSignup(env()[signupEnv])
+    if (mode === undefined) {
+      return {
+        ok: false,
+        response: configProblem([], [], `${signupEnv} must be unset, owner or open`),
+      }
+    }
+    return { ok: true, value: mode }
+  }
+
+  /**
+   * The settings sign-in needs. The owner's login is required in owner mode
+   * only; `owner` is `undefined` in open mode.
+   */
+  function readSignIn(): Checked<{
+    mode: SignupMode
+    owner: string | undefined
+    github: Record<string, string>
+  }> {
+    const mode = readSignup()
+    if (!mode.ok) return mode
+    const names = [githubClientIdEnv, githubClientSecretEnv]
+    if (mode.value === 'owner') names.push(OWNER_LOGIN_ENV)
+    const settings = readSettings(names)
+    if (!settings.ok) return settings
+    return {
+      ok: true,
+      value: {
+        mode: mode.value,
+        owner: mode.value === 'owner' ? settings.value[OWNER_LOGIN_ENV] : undefined,
+        github: settings.value,
+      },
+    }
   }
 
   /** The issuer without trailing slashes, the form signed as `iss` and published. */
@@ -644,8 +706,9 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   async function authorize(request: Request): Promise<Response> {
     const ctx = await readContext()
     if (!ctx.ok) return ctx.response
-    const settings = readSettings([githubClientIdEnv, githubClientSecretEnv, OWNER_LOGIN_ENV])
-    if (!settings.ok) return settings.response
+    const signIn = readSignIn()
+    if (!signIn.ok) return signIn.response
+    const settings = signIn.value.github
 
     const params = singleParams(new URL(request.url).searchParams)
     if (!params) {
@@ -709,7 +772,7 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
       STATE_SECONDS,
     )
     const target = new URL(GITHUB_AUTHORIZE_URL)
-    target.searchParams.set('client_id', settings.value[githubClientIdEnv])
+    target.searchParams.set('client_id', settings[githubClientIdEnv])
     target.searchParams.set('redirect_uri', `${ctx.value.issuer}${GITHUB_CALLBACK_PATH}`)
     target.searchParams.set('state', state)
     target.searchParams.set('allow_signup', 'false')
@@ -760,8 +823,9 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   async function githubCallback(request: Request): Promise<Response> {
     const ctx = await readContext()
     if (!ctx.ok) return ctx.response
-    const settings = readSettings([githubClientIdEnv, githubClientSecretEnv, OWNER_LOGIN_ENV])
-    if (!settings.ok) return settings.response
+    const signIn = readSignIn()
+    if (!signIn.ok) return signIn.response
+    const { owner, github: settings } = signIn.value
 
     const headers = new Headers()
     headers.append('set-cookie', nonceCookie('', 0, ctx.value.issuer))
@@ -785,20 +849,22 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
 
     let login: string | undefined
     try {
-      login = await githubLogin(ctx.value, settings.value, code)
+      login = await githubLogin(ctx.value, settings, code)
     } catch {
       login = undefined
     }
     if (login === undefined) {
       return refuse(502, 'GitHub could not confirm who you are. Try again.')
     }
-    const owner = settings.value[OWNER_LOGIN_ENV]
-    if (login.toLowerCase() !== owner.toLowerCase()) {
+    // Owner mode: the owner's login, as configured. Open mode: the login the
+    // user signed in with, in lower case.
+    if (owner !== undefined && login.toLowerCase() !== owner.toLowerCase()) {
       return refuse(
         403,
         'This server serves only its owner. Sign in with the owner GitHub account.',
       )
     }
+    const subject = owner ?? login.toLowerCase()
 
     const clientId = text(state, 'cid')
     const redirectUri = text(state, 'ru')
@@ -809,7 +875,7 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     const authCode = await signValue(
       ctx.value,
       'code',
-      { sub: owner, cid: clientId, ru: redirectUri, cc: challenge },
+      { sub: subject, cid: clientId, ru: redirectUri, cc: challenge },
       CODE_SECONDS,
     )
     const target = new URL(redirectUri)
@@ -857,9 +923,14 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   async function token(request: Request): Promise<Response> {
     const ctx = await readContext()
     if (!ctx.ok) return ctx.response
-    const settings = readSettings([OWNER_LOGIN_ENV])
-    if (!settings.ok) return settings.response
-    const owner = settings.value[OWNER_LOGIN_ENV]
+    const mode = readSignup()
+    if (!mode.ok) return mode.response
+    let owner: string | undefined
+    if (mode.value === 'owner') {
+      const settings = readSettings([OWNER_LOGIN_ENV])
+      if (!settings.ok) return settings.response
+      owner = settings.value[OWNER_LOGIN_ENV]
+    }
 
     const contentType = request.headers.get('content-type') ?? ''
     if (!contentType.toLowerCase().startsWith('application/x-www-form-urlencoded')) {
@@ -895,9 +966,21 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     }
   }
 
+  // The subject a sealed grant may be exchanged for: in owner mode the
+  // configured owner (the grant must name them); in open mode the grant's own
+  // subject in lower case. `undefined` when the grant does not qualify.
+  function subjectOf(
+    claims: Record<string, unknown>,
+    owner: string | undefined,
+  ): string | undefined {
+    const subject = text(claims, 'sub') ?? ''
+    if (owner === undefined) return subject === '' ? undefined : subject.toLowerCase()
+    return subject.toLowerCase() === owner.toLowerCase() ? owner : undefined
+  }
+
   async function grant(
     ctx: Context,
-    owner: string,
+    owner: string | undefined,
     clientId: string,
     params: Map<string, string>,
   ): Promise<Response> {
@@ -927,11 +1010,11 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
       ) {
         return grantError('the PKCE code_verifier does not match')
       }
-      const subject = text(claims, 'sub') ?? ''
-      if (subject.toLowerCase() !== owner.toLowerCase()) {
+      const subject = subjectOf(claims, owner)
+      if (subject === undefined) {
         return grantError('the authorization code is not for the owner')
       }
-      return issueTokens(ctx, owner, clientId, randomId())
+      return issueTokens(ctx, subject, clientId, randomId())
     }
 
     if (grantType === 'refresh_token') {
@@ -957,10 +1040,11 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
         await grantStore.claim(revoked, Math.floor(now() / 1000) + REFRESH_TOKEN_SECONDS)
         return grantError('the refresh token was already used')
       }
-      if ((text(claims, 'sub') ?? '').toLowerCase() !== owner.toLowerCase()) {
+      const subject = subjectOf(claims, owner)
+      if (subject === undefined) {
         return grantError('the refresh token is not for the owner')
       }
-      return issueTokens(ctx, owner, clientId, family)
+      return issueTokens(ctx, subject, clientId, family)
     }
 
     return oauthError(
