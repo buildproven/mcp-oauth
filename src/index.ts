@@ -1,5 +1,5 @@
 /** Package version, kept in step with package.json by tests/version.test.ts. */
-export const VERSION = '0.1.0'
+export const VERSION = '0.2.0'
 
 export {
   AUTHORIZE_PATH,
